@@ -1,0 +1,9 @@
+gymnasium
+numpy
+torch
+tyro
+stable_baselines3
+git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
+mujoco
+patchelf
+tensorboard
