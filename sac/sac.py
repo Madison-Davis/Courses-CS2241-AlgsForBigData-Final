@@ -1,22 +1,39 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
+# sac.py
+
+
+# docs and experiment results can be found at 
+# https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
+
+
+# ++++++++++++ Imports and Installs ++++++++++++ #
 import os
-import random
 import time
-from dataclasses import dataclass
-
-import gymnasium as gym
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 import tyro
-from stable_baselines3.common.buffers import ReplayBuffer
+import wandb
+import torch
+import random
+import numpy as np
+import torch.nn as nn
+import gymnasium as gym
+import torch.optim as optim
+import stable_baselines3 as sb3
+import torch.nn.functional as F
+from dataclasses import dataclass
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.buffers import ReplayBuffer
 
 
+
+# ++++++++++++++ Global Variables ++++++++++++++ #
+LOG_STD_MAX = 2
+LOG_STD_MIN = -5
+
+
+
+# ++++++++++++++ Class Definitions +++++++++++++ #
 @dataclass
 class Args:
+    # General Arguments
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
     seed: int = 1
@@ -34,7 +51,7 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
-    # Algorithm specific arguments
+    # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
     total_timesteps: int = 1000000
@@ -65,29 +82,14 @@ class Args:
     """automatic tuning of the entropy coefficient"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name):
-    def thunk():
-        if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        else:
-            env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.action_space.seed(seed)
-        return env
-
-    return thunk
-
-
-# ALGO LOGIC: initialize agent here:
+# NOTE: initialize agent here
 class SoftQNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
         self.fc1 = nn.Linear(
-                np.array(env.single_observation_space.shape).prod() + np.prod(
-                        env.single_action_space.shape),
-                256,
-        )
+                np.array(env.single_observation_space.shape).prod() + 
+                np.prod(env.single_action_space.shape), 256,
+                )
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 1)
 
@@ -97,10 +99,6 @@ class SoftQNetwork(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
-
-
-LOG_STD_MAX = 2
-LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
@@ -113,20 +111,18 @@ class Actor(nn.Module):
         self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
         # action rescaling
         self.register_buffer(
-                "action_scale",
-                torch.tensor(
-                        (
-                                env.single_action_space.high - env.single_action_space.low) / 2.0,
-                        dtype=torch.float32,
-                ),
+            "action_scale",
+            torch.tensor(
+                (env.single_action_space.high - env.single_action_space.low) / 2.0,
+                dtype=torch.float32,
+            ),
         )
         self.register_buffer(
-                "action_bias",
-                torch.tensor(
-                        (
-                                env.single_action_space.high + env.single_action_space.low) / 2.0,
-                        dtype=torch.float32,
-                ),
+            "action_bias",
+            torch.tensor(
+                (env.single_action_space.high + env.single_action_space.low) / 2.0,
+                dtype=torch.float32,
+            ),
         )
 
     def forward(self, x):
@@ -135,9 +131,8 @@ class Actor(nn.Module):
         mean = self.fc_mean(x)
         log_std = self.fc_logstd(x)
         log_std = torch.tanh(log_std)
-        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (
-                log_std + 1)  # From SpinUp / Denis Yarats
-
+        # From SpinUp / Denis Yarats
+        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  
         return mean, log_std
 
     def get_action(self, x):
@@ -155,35 +150,47 @@ class Actor(nn.Module):
         return action, log_prob, mean
 
 
+# ++++++++++++++++ Helper Functions +++++++++++++++ #
+def make_env(env_id, seed, idx, capture_video, run_name):
+    def thunk():
+        if capture_video and idx == 0:
+            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        else:
+            env = gym.make(env_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env.action_space.seed(seed)
+        return env
+    return thunk
+
+
+# +++++++++++++++++ Main Function ++++++++++++++++ #
 if __name__ == "__main__":
-    import stable_baselines3 as sb3
 
     if sb3.__version__ < "2.0":
         raise ValueError(
-                """Ongoing migration: run the following command to install the new dependencies:
-    poetry run pip install "stable_baselines3==2.0.0a1"
-    """
+            """Ongoing migration: run the following command to install the new dependencies:
+            poetry run pip install "stable_baselines3==2.0.0a1"
+            """
         )
 
     args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
-        import wandb
-
         wandb.init(
-                project=args.wandb_project_name,
-                entity=args.wandb_entity,
-                sync_tensorboard=True,
-                config=vars(args),
-                name=run_name,
-                monitor_gym=True,
-                save_code=True,
+            project=args.wandb_project_name,
+            entity=args.wandb_entity,
+            sync_tensorboard=True,
+            config=vars(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
         )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
-            "hyperparameters",
-            "|param|value|\n|-|-|\n%s" % ("\n".join(
-                    [f"|{key}|{value}|" for key, value in vars(args).items()])),
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join(
+        [f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
     # TRY NOT TO MODIFY: seeding
@@ -197,8 +204,8 @@ if __name__ == "__main__":
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-            [make_env(args.env_id, args.seed + i, i, args.capture_video,
-                      run_name) for i in range(args.num_envs)]
+        [make_env(args.env_id, args.seed + i, i, args.capture_video,
+                    run_name) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space,
                       gym.spaces.Box), "only continuous action space is supported"
