@@ -1,0 +1,7 @@
+# Ignore evaluation run dumps
+/eval/runs/
+
+# Ignore Python cache in sac directory
+/sac/__pycache__/
+
+/sac_env
