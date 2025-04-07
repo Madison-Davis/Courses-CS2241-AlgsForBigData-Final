@@ -1,4 +1,4 @@
-# sac.py
+# sac_torch.py
 
 
 # docs and experiment results can be found at 
