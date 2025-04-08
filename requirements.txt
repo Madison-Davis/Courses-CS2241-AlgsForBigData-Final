@@ -9,3 +9,5 @@ patchelf
 tensorboard
 torchrl
 wandb
+tensordict
+torchrl
