@@ -4,6 +4,15 @@
 # LICENSE file in the root directory of this source tree.
 from __future__ import annotations
 
+
+# TODO
+from pcrb_torch_sampler import Sampler, PrioritizedSampler, RandomSampler
+from pcrb_torch_storage import Storage, ListStorage, _get_default_collate
+
+
+# Imports and Installs
+import numpy as np
+import torch
 import collections
 import contextlib
 import json
@@ -14,17 +23,11 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Sequence
-
-import numpy as np
-import torch
-
 try:
     from torch.compiler import is_compiling
 except ImportError:
     from torch._dynamo import is_compiling
-
 from functools import partial
-
 from tensordict import (
     is_tensor_collection,
     is_tensorclass,
@@ -38,19 +41,9 @@ from tensordict.nn.utils import _set_dispatch_td_nn_modules
 from tensordict.utils import expand_as_right, expand_right
 from torch import Tensor
 from torch.utils._pytree import tree_map
-
 from torchrl._utils import accept_remote_rref_udf_invocation
-from torchrl.data.replay_buffers.samplers import (
-    PrioritizedSampler,
-    RandomSampler,
-    Sampler,
-    SamplerEnsemble,
-)
 from torchrl.data.replay_buffers.storages import (
-    _get_default_collate,
     _stack_anything,
-    ListStorage,
-    Storage,
     StorageEnsemble,
 )
 from torchrl.data.replay_buffers.utils import (
@@ -772,6 +765,7 @@ class ReplayBuffer:
         return self._storage
 
 
+# TODO
 class PrioritizedReplayBuffer(ReplayBuffer):
     """
     Prioritized replay buffer.
@@ -891,15 +885,8 @@ class TensorDictReplayBuffer(ReplayBuffer):
             tensordicts = self._transform.inv(tensordicts)
         if tensordicts is None:
             return torch.zeros((0, self._storage.ndim), dtype=torch.long)
-
         index = super()._extend(tensordicts)
-
-        # TODO: to be usable directly, the indices should be flipped but the issue
-        #  is that just doing this results in indices that are not sorted like the original data
-        #  so the actually indices will have to be used on the _storage directly (not on the buffer)
         self._set_index_in_td(tensordicts, index)
-        # TODO: in principle this is a good idea but currently it doesn't work + it re-writes a priority that has just been written
-        # self.update_tensordict_priority(tensordicts)
         return index
 
     def _set_index_in_td(self, tensordict, index):

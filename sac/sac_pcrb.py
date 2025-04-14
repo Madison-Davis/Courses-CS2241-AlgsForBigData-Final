@@ -21,9 +21,9 @@ import torch.optim as optim
 import tyro
 import wandb
 import pcrb_torch_rb
+import pcrb_torch_storage
 from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
-from torchrl.data import ListStorage
 
 # ++++++++++++++ Global Variables ++++++++++++++ #
 LOG_STD_MAX = 2
@@ -238,18 +238,13 @@ if __name__ == "__main__":
         alpha = args.alpha
 
     # Setup: create replay buffer
-    # TODO: here is what we need to change!  Need to have a prioritized replay buffer
+    # TODO
     envs.single_observation_space.dtype = np.float32
-    # rb = ReplayBuffer(
-    #         args.buffer_size,
-    #         envs.single_observation_space,
-    #         envs.single_action_space,
-    #         device,
-    #         n_envs=args.num_envs,
-    #         handle_timeout_termination=False,
-    # )
-    rb = pcrb_torch_rb.PrioritizedReplayBuffer(alpha=0.7, beta=0.9,
-                                 storage=ListStorage(args.buffer_size))
+    tier_capacities = {0:500,1:500,2:500}
+    rb = pcrb_torch_rb.PrioritizedReplayBuffer(
+        alpha=0.7, 
+        beta=0.9, 
+        storage=pcrb_torch_storage.ListStorage(args.buffer_size))
     start_time = time.time()
 
     # NOTE: Try not to change this
