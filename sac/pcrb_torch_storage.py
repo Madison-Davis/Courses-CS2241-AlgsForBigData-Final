@@ -4,6 +4,9 @@
 # LICENSE file in the root directory of this source tree.
 from __future__ import annotations
 
+# TODO
+import heapq
+
 import abc
 import logging
 import os
@@ -13,7 +16,6 @@ from collections import OrderedDict
 from copy import copy
 from multiprocessing.context import get_spawning_popen
 from typing import Any, Sequence
-
 import numpy as np
 import tensordict
 import torch
@@ -223,7 +225,6 @@ class Storage:
         ...
 
 
-# TODO
 class ListStorage(Storage):
     """A storage stored in a list.
 
@@ -368,6 +369,97 @@ class ListStorage(Storage):
                 device=item.device,
             ).reshape_as(item)
         raise NotImplementedError(f"type {type(item)} is not supported yet.")
+
+
+
+# TODO
+class TieredCachedStorage(ListStorage):
+    def __init__(self, 
+                 max_size: int, 
+                 num_tiers: int = 3, 
+                 tier_capacities: list = None, 
+                 compilable: bool = False):
+        
+        super().__init__(max_size, compilable=compilable)
+        if tier_capacities is None:
+            tier_capacities = [max_size // num_tiers] * num_tiers
+        self.num_tiers = num_tiers
+        self.tier_capacities = tier_capacities
+        self.tiers = [[] for _ in range(num_tiers)]
+    
+    def quantize(self, data, from_tier, to_tier):
+        """
+        Quantizes the TD error based on tier depth.
+        TD error is assumed to be the last element in data
+        """
+        td_error = data[-1]  
+        # Simple quantization logic: reduce the TD error by a factor of the tier depth
+        quantized_td_error = td_error / (to_tier + 1)
+        # Return the data with quantized TD error
+        data = (quantized_td_error, *data[1:])  
+        return data
+    
+    def insert(self, data):
+        """
+        Insert a data item (TD error, data) into the correct tier based on TD error.
+        Uses 'trickle-down' logic: if a more surprising point comes in, it percolates down.
+        """
+        td_error = data[-1]  # TD error is assumed to be the last element in data
+        current_data = (td_error, data)  # Wrap the TD error with the data tuple
+        current_data_tier = 1  # Start at tier 1
+        
+        # For each tier, try to insert the data
+        for i in range(self.num_tiers):
+            tier = self.tiers[i]
+            min_td = tier[0][0] if tier else float('inf')  # Minimum TD error in this tier
+            max_td = tier[-1][0] if tier else float('-inf')  # Maximum TD error in this tier
+            
+            # If the current tier has space, insert the data and return
+            if len(tier) < self.tier_capacities[i]:
+                current_data = self.quantize(current_data, current_data_tier, i)
+                heapq.heappush(tier, current_data)
+                return
+            
+            # Otherwise, if the current tier is full, percolate if needed
+            if min_td <= td_error <= max_td:
+                current_data = self.quantize(current_data, current_data_tier, i)
+                heapq.heappush(tier, current_data)
+                # If the tier exceeds its capacity, evict and move to the next tier
+                if len(tier) > self.tier_capacities[i]:
+                    evicted_data = heapq.heappop(tier)
+                    # Move the evicted data to the next tier
+                    if i + 1 < self.num_tiers:
+                        self.insert(evicted_data[1])  # Insert evicted data into next tier
+                    return
+                
+        # If we exhausted all tiers, discard the data
+        print(f"Data with TD error {td_error} discarded: outside of all tier ranges.")
+    
+    def get(self, index):
+        """
+        Get a data item from the appropriate tier. This method just delegates to ListStorage's get.
+        NOTE: we could implement tier-specific access if necessary.
+        """
+        return super().get(index)
+    
+    def __len__(self):
+        # Length is the total number of elements across all tiers
+        return sum(len(tier) for tier in self.tiers)
+    
+    def state_dict(self):
+        # Include the state of the tiers in the state dict
+        state_dict = super().state_dict()
+        state_dict.update({
+            "tiers": [list(tier) for tier in self.tiers]
+        })
+        return state_dict
+    
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self.tiers = [list(tier) for tier in state_dict["tiers"]]
+    
+    def _empty(self):
+        self.tiers = [[] for _ in range(self.num_tiers)]
 
 
 

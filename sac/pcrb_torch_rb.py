@@ -6,7 +6,7 @@ from __future__ import annotations
 
 
 # TODO
-from pcrb_torch_sampler import Sampler, PrioritizedSampler, RandomSampler
+from pcrb_torch_sampler import Sampler, PrioritizedSampler, TieredCachedPrioritizedSampler, RandomSampler
 from pcrb_torch_storage import Storage, ListStorage, _get_default_collate
 
 
@@ -764,8 +764,6 @@ class ReplayBuffer:
         """
         return self._storage
 
-
-# TODO
 class PrioritizedReplayBuffer(ReplayBuffer):
     """
     Prioritized replay buffer.
@@ -787,7 +785,11 @@ class PrioritizedReplayBuffer(ReplayBuffer):
     ) -> None:
         if storage is None:
             storage = ListStorage(max_size=1_000)
+        # TODO
+        # +++++++++ #
+        # sampler = TieredCachedPrioritizedSampler()    
         sampler = PrioritizedSampler(storage.max_size, alpha, beta, eps, dtype)
+        # +++++++++ #
         super().__init__(
             storage=storage,
             sampler=sampler,

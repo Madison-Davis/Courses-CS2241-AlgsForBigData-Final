@@ -238,13 +238,16 @@ if __name__ == "__main__":
         alpha = args.alpha
 
     # Setup: create replay buffer
-    # TODO
     envs.single_observation_space.dtype = np.float32
-    tier_capacities = {0:500,1:500,2:500}
+    # TODO
+    # +++++++++ #
+    #pcrb_storage = pcrb_torch_storage.TieredCachedStorage(max_size=1000, num_tiers=3, tier_capacities=[200, 300, 500])
+    pcrb_storage = pcrb_torch_storage.ListStorage(args.buffer_size)
+    # +++++++++ #
     rb = pcrb_torch_rb.PrioritizedReplayBuffer(
         alpha=0.7, 
         beta=0.9, 
-        storage=pcrb_torch_storage.ListStorage(args.buffer_size))
+        storage=pcrb_storage)
     start_time = time.time()
 
     # NOTE: Try not to change this

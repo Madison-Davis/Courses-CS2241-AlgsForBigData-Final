@@ -290,7 +290,6 @@ class SamplerWithoutReplacement(Sampler):
         return f"{self.__class__.__name__}({perc: 4.4f}% sampled)"
 
 
-# TODO
 class PrioritizedSampler(Sampler):
     """Prioritized sampler for replay buffer.
 
@@ -720,6 +719,10 @@ class PrioritizedSampler(Sampler):
         for i, elt in enumerate(mm_mt.tolist()):
             self._min_tree[i] = elt
 
+
+# TODO
+class TieredCachedPrioritizedSampler(Sampler):
+    pass
 
 
 class SliceSampler(Sampler):
