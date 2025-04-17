@@ -241,12 +241,14 @@ if __name__ == "__main__":
     envs.single_observation_space.dtype = np.float32
     # TODO
     # +++++++++ #
-    #pcrb_storage = pcrb_torch_storage.TieredCachedStorage(max_size=1000, num_tiers=3, tier_capacities=[200, 300, 500])
-    pcrb_storage = pcrb_torch_storage.ListStorage(args.buffer_size)
+    # NOTE: max_size means max num of items per tier... we can set this so that max_size = args.buffer_size / 3
+    pcrb_storage = pcrb_torch_storage.TieredCacheStorage(max_size=1000, num_tiers=3, tier_capacities=[200, 300, 500])
+    #pcrb_storage = pcrb_torch_storage.ListStorage(args.buffer_size)
     # +++++++++ #
     rb = pcrb_torch_rb.PrioritizedReplayBuffer(
         alpha=0.7, 
         beta=0.9, 
+        collate_fn=pcrb_storage._collate_fn,
         storage=pcrb_storage)
     start_time = time.time()
 
@@ -326,7 +328,6 @@ if __name__ == "__main__":
                 # use default td error that is high
                 "td_error": torch.ones_like(td_errors) * MAX_TD_ERROR,
         }, [obs.shape[0]])
-
         rb.extend(transition)
 
         # Change 'state' to the next state we go to

@@ -6,6 +6,9 @@ from __future__ import annotations
 
 # TODO
 import heapq
+from typing import Any, Sequence
+from collections import defaultdict
+from torch.utils.data._utils.collate import default_collate
 
 import abc
 import logging
@@ -15,7 +18,6 @@ import warnings
 from collections import OrderedDict
 from copy import copy
 from multiprocessing.context import get_spawning_popen
-from typing import Any, Sequence
 import numpy as np
 import tensordict
 import torch
@@ -373,95 +375,174 @@ class ListStorage(Storage):
 
 
 # TODO
-class TieredCachedStorage(ListStorage):
-    def __init__(self, 
-                 max_size: int, 
-                 num_tiers: int = 3, 
-                 tier_capacities: list = None, 
-                 compilable: bool = False):
-        
-        super().__init__(max_size, compilable=compilable)
-        if tier_capacities is None:
-            tier_capacities = [max_size // num_tiers] * num_tiers
+class TieredCacheStorage(Storage):
+    def __init__(self, max_size: int, num_tiers: int = 3, tier_capacities: list[int] = None, compilable: bool = False):
+        super().__init__(max_size=max_size, compilable=compilable)
+        assert tier_capacities is not None and len(tier_capacities) == num_tiers, "Must specify capacities for each tier"
         self.num_tiers = num_tiers
         self.tier_capacities = tier_capacities
-        self.tiers = [[] for _ in range(num_tiers)]
-    
-    def quantize(self, data, from_tier, to_tier):
-        """
-        Quantizes the TD error based on tier depth.
-        TD error is assumed to be the last element in data
-        """
-        td_error = data[-1]  
-        # Simple quantization logic: reduce the TD error by a factor of the tier depth
-        quantized_td_error = td_error / (to_tier + 1)
-        # Return the data with quantized TD error
-        data = (quantized_td_error, *data[1:])  
+        self.tiers = [[] for _ in range(num_tiers)]     # list of min-heaps
+        self._index_map = {}                            # global_idx -> (tier_idx, local_idx)
+        self._reverse_index = defaultdict(dict)         # (tier_idx -> {local_idx: global_idx})
+        self._cursor = 0                                # global counter
+
+    def _next_index(self) -> int:
+        idx = self._cursor
+        self._cursor += 1
+        return idx
+
+    def quantize(self, data, from_tier: int, to_tier: int):
+        # TODO placeholder: override with real quantization logic
         return data
-    
-    def insert(self, data):
-        """
-        Insert a data item (TD error, data) into the correct tier based on TD error.
-        Uses 'trickle-down' logic: if a more surprising point comes in, it percolates down.
-        """
-        td_error = data[-1]  # TD error is assumed to be the last element in data
-        current_data = (td_error, data)  # Wrap the TD error with the data tuple
-        current_data_tier = 1  # Start at tier 1
-        
-        # For each tier, try to insert the data
+
+    def set(self, cursor: int | Sequence[int], data: Any, *, set_cursor: bool = True):
+        if isinstance(cursor, int):
+            self._insert_single(data)
+        else:
+            for d in data:
+                self._insert_single(d)
+
+    def _insert_single(self, data):
+        # Insert a single data point into the tier using a trickle down effect based on its td-error
+        # Grab the td-error of the data
+        td_error = data["td_error"]
+        if isinstance(td_error, torch.Tensor):
+            td_error = td_error.item()  
+        # Because heaps like unique IDs, if TD errors are same (they're serving as our index), tie-break 
+        # based on when it came in
+        unique_id = self._cursor
+        current_data = (td_error, unique_id, data)
+        # Try to insert data in tiers based on TD error ranges
         for i in range(self.num_tiers):
             tier = self.tiers[i]
-            min_td = tier[0][0] if tier else float('inf')  # Minimum TD error in this tier
-            max_td = tier[-1][0] if tier else float('-inf')  # Maximum TD error in this tier
-            
-            # If the current tier has space, insert the data and return
+            # If tier isn't full, insert directly
             if len(tier) < self.tier_capacities[i]:
-                current_data = self.quantize(current_data, current_data_tier, i)
+                current_data = self.quantize(current_data, 0, i)
                 heapq.heappush(tier, current_data)
+                self._map_index(tier_idx=i, local_idx=len(tier)-1)
                 return
-            
-            # Otherwise, if the current tier is full, percolate if needed
+            # If the tier is full, check if the data can be inserted into the tier based on the TD error range
+            min_td, max_td = tier[0][0], tier[-1][0]  # min/max TD error of the current tier
             if min_td <= td_error <= max_td:
-                current_data = self.quantize(current_data, current_data_tier, i)
+                current_data = self.quantize(current_data, 0, i)
                 heapq.heappush(tier, current_data)
-                # If the tier exceeds its capacity, evict and move to the next tier
+                # If the tier is over capacity, remove the largest element (based on TD error)
                 if len(tier) > self.tier_capacities[i]:
-                    evicted_data = heapq.heappop(tier)
-                    # Move the evicted data to the next tier
-                    if i + 1 < self.num_tiers:
-                        self.insert(evicted_data[1])  # Insert evicted data into next tier
-                    return
-                
-        # If we exhausted all tiers, discard the data
-        print(f"Data with TD error {td_error} discarded: outside of all tier ranges.")
-    
-    def get(self, index):
-        """
-        Get a data item from the appropriate tier. This method just delegates to ListStorage's get.
-        NOTE: we could implement tier-specific access if necessary.
-        """
-        return super().get(index)
-    
+                    removed = heapq.heappop(tier)  # remove element with largest TD error
+                    removed_data = removed[2]  # The actual data part
+                    removed_td_error = removed[0]  # The TD error of the removed item
+                    # Try to insert the removed item into the lower tier, if possible
+                    for j in range(i + 1, self.num_tiers):
+                        lower_tier = self.tiers[j]
+                        # If the next lower tier is full, pop and continue moving down
+                        if len(lower_tier) < self.tier_capacities[j]:
+                            lower_data = (removed_td_error, unique_id, removed_data)
+                            lower_data = self.quantize(lower_data, 0, j)
+                            heapq.heappush(lower_tier, lower_data)
+                            self._map_index(tier_idx=j, local_idx=len(lower_tier)-1)
+                            break  # Stop when the item is successfully inserted into a tier
+                        else:
+                            # If the next lower tier is full, pop the highest TD error item and continue
+                            removed = heapq.heappop(lower_tier)  # remove element with largest TD error
+                            removed_data = removed[2]  # The actual data part
+                            removed_td_error = removed[0]  # The TD error of the removed item
+                            continue  # Continue to move the data to the next lower tier
+                self._map_index(tier_idx=i, local_idx=len(tier)-1)
+                return
+        # If no tier accepts it, discard silently (or add other logic here)
+        print(f"Data with td_error {td_error} discarded")
+
+    def _map_index(self, tier_idx: int, local_idx: int):
+        global_idx = self._next_index()
+        self._index_map[global_idx] = (tier_idx, local_idx)
+        self._reverse_index[tier_idx][local_idx] = global_idx
+
+    def get(self, index: int | Sequence[int] | torch.Tensor | TensorDict) -> Any:
+        # Handle scalar tensor index
+        if isinstance(index, torch.Tensor) and index.ndimension() == 0:
+            index = [index.item()]
+        # Handle TensorDict input directly
+        if isinstance(index, TensorDict):
+            return {key: index[key] for key in index.keys()}
+        # Handle single int index
+        if isinstance(index, int):
+            tier_idx, local_idx = self._index_map.get(index, (None, None))
+            if tier_idx is None or local_idx is None:
+                return None
+            tier_data = self.tiers[tier_idx]
+            if len(tier_data) <= local_idx:
+                return None
+            return tier_data[local_idx][2]  # data only
+        # Handle sequence of indices
+        if isinstance(index, (list, tuple, torch.Tensor)):
+            if isinstance(index, torch.Tensor):
+                index = index.tolist()
+            results = []
+            for i in index:
+                # Recursive call for single index
+                result = self.get(i)  
+                if result is not None:
+                    results.append(result)
+            return results
+        raise TypeError(f"Unsupported index type: {type(index)}")
+
+    def _collate_fn(self, samples: list[TensorDict]) -> TensorDict:
+        # Function to consolidate samples into proper size
+        # NOTE: print statement for debugging
+        # print("SAMPLE [PART D] received", len(samples), "samples")
+        # Verify samples exist
+        if len(samples) == 0:
+            raise ValueError("No samples to collate.")
+        # Validate all samples are TensorDicts
+        for i, s in enumerate(samples):
+            if not isinstance(s, TensorDict):
+                print(f"[ERROR] Sample {i} is not a TensorDict: {type(s)}")
+                raise ValueError("Samples passed to _collate_fn were not all TensorDicts")
+        try:
+            # If all good, use TensorDict's native stacking to collate them
+            batched = TensorDict.stack(samples, dim=0)
+            return batched
+        except Exception as e:
+            print("[COLLATE ERROR] TensorDict.stack failed!")
+            for i, d in enumerate(samples):
+                print(f"Sample {i} keys: {d.keys()}")
+            raise e
+
     def __len__(self):
-        # Length is the total number of elements across all tiers
         return sum(len(tier) for tier in self.tiers)
-    
-    def state_dict(self):
-        # Include the state of the tiers in the state dict
-        state_dict = super().state_dict()
-        state_dict.update({
-            "tiers": [list(tier) for tier in self.tiers]
-        })
-        return state_dict
-    
-    def load_state_dict(self, state_dict):
-        super().load_state_dict(state_dict)
-        self.tiers = [list(tier) for tier in state_dict["tiers"]]
-    
+
+    def contains(self, item):
+        return item in self._index_map
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "tiers": self.tiers,
+            "cursor": self._cursor,
+            "index_map": self._index_map,
+        }
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        self.tiers = state_dict["tiers"]
+        self._cursor = state_dict["cursor"]
+        self._index_map = state_dict["index_map"]
+
     def _empty(self):
         self.tiers = [[] for _ in range(self.num_tiers)]
+        self._index_map.clear()
+        self._reverse_index.clear()
+        self._cursor = 0
 
+    def get_tier(self, tier_idx: int) -> Any:
+        if tier_idx < 0 or tier_idx >= self.num_tiers:
+            raise IndexError(f"Tier index {tier_idx} out of range.")
+        return self.tiers[tier_idx]
 
+    def print_tier_contents(storage: TieredCacheStorage):
+        # More for my debugging
+        for i, tier in enumerate(storage.tiers):
+            print(f"\n--- Tier {i} ---")
+            for j, (td_error, data) in enumerate(tier):
+                print(f"[{j}] TD Error: {td_error}, Data Keys: {list(data.keys())}")
 
 class LazyStackStorage(ListStorage):
     """A ListStorage that returns LazyStackTensorDict instances.
@@ -1643,6 +1724,8 @@ def _get_default_collate(storage, _is_tensordict=False):
         return _collate_id
     elif isinstance(storage, ListStorage):
         return _stack_anything
+    elif isinstance(storage, TieredCacheStorage):
+        return default_collate
     else:
         raise NotImplementedError(
             f"Could not find a default collate_fn for storage {type(storage)}."

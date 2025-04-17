@@ -6,7 +6,7 @@ from __future__ import annotations
 
 
 # TODO
-from pcrb_torch_sampler import Sampler, PrioritizedSampler, TieredCachedPrioritizedSampler, RandomSampler
+from pcrb_torch_sampler import Sampler, PrioritizedSampler, TieredCachePrioritizedSampler, RandomSampler
 from pcrb_torch_storage import Storage, ListStorage, _get_default_collate
 
 
@@ -546,19 +546,21 @@ class ReplayBuffer:
 
     @pin_memory_output
     def _sample(self, batch_size: int) -> tuple[Any, dict]:
+        # NOTE: print statement for debugging
+        # print("SAMPLE [PART A]")
         with self._replay_lock if not is_compiling() else contextlib.nullcontext():
-            index, info = self._sampler.sample(self._storage, batch_size)
-            info["index"] = index
-            data = self._storage.get(index)
-        if not isinstance(index, INT_CLASSES):
+            data, info = self._sampler.sample(self._storage, batch_size)
             data = self._collate_fn(data)
+            #nfo["index"] = index
+            #data = self._storage.get(index)
+        # if not isinstance(index, INT_CLASSES):
+        #   data = self._transform(data)
         if self._transform is not None and len(self._transform):
             is_td = is_tensor_collection(data)
             with data.unlock_() if is_td else contextlib.nullcontext(), _set_dispatch_td_nn_modules(
                 is_td
             ):
                 data = self._transform(data)
-
         return data, info
 
     def empty(self):
@@ -787,8 +789,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             storage = ListStorage(max_size=1_000)
         # TODO
         # +++++++++ #
-        # sampler = TieredCachedPrioritizedSampler()    
-        sampler = PrioritizedSampler(storage.max_size, alpha, beta, eps, dtype)
+        #sampler = PrioritizedSampler(storage.max_size, alpha, beta, eps, dtype)
+        sampler = TieredCachePrioritizedSampler(tier_probs = [0.6,0.3,0.1])
         # +++++++++ #
         super().__init__(
             storage=storage,

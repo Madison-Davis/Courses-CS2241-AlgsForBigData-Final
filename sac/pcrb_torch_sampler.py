@@ -4,6 +4,11 @@
 # LICENSE file in the root directory of this source tree.
 from __future__ import annotations
 
+# TODO
+from typing import Any, Optional
+from pcrb_torch_storage import TieredCacheStorage
+import pickle
+
 import json
 import textwrap
 import warnings
@@ -12,7 +17,6 @@ from collections import OrderedDict
 from copy import copy, deepcopy
 from multiprocessing.context import get_spawning_popen
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
@@ -528,8 +532,6 @@ class PrioritizedSampler(Sampler):
             index = unravel_index(index, storage.shape)
         return index, {"_weight": weight}
 
-        return index, {"_weight": weight}
-
     def add(self, index: torch.Tensor | int) -> None:
         super().add(index)
         self._maybe_erase_max_priority(index)
@@ -721,8 +723,108 @@ class PrioritizedSampler(Sampler):
 
 
 # TODO
-class TieredCachedPrioritizedSampler(Sampler):
-    pass
+class TieredCachePrioritizedSampler(Sampler):
+    def __init__(self, tier_probs: list[float], seed: Optional[int] = None):
+        super().__init__()
+        if not torch.isclose(torch.tensor(tier_probs).sum(), torch.tensor(1.0)):
+            raise ValueError("tier_probs must sum to 1.0")
+        self.tier_probs = tier_probs
+        self.num_tiers = len(tier_probs)
+        self._rng = torch.Generator().manual_seed(seed or torch.seed())
+
+    def sample(self, storage: TieredCacheStorage, batch_size: int) -> tuple[torch.Tensor, dict]:
+        # NOTE: print statement for debugging
+        # print("SAMPLE [PART B]")
+
+        # Assert storage has data points for us to sample
+        if len(storage) == 0:
+            raise RuntimeError("Storage is empty")
+        # Set up data structures for us to collect samples as we go
+        all_sampled_data = []
+        indices = []
+        weights = []
+        sampled_indices_list = []
+        remaining_batch_size = batch_size
+        
+        # Begin collecting samples until we've met the batch size
+        while remaining_batch_size > 0:
+            # Sample tier indices based on probabilities (from argument)
+            selected_tiers = torch.multinomial(torch.tensor(self.tier_probs), remaining_batch_size, replacement=True)
+            # For each selected tier...
+            for tier_idx in selected_tiers:
+                # Get all data from the tier
+                tier_data = storage.get_tier(tier_idx.item())
+                # Make sure the tier actually exists and has data
+                if not tier_data:
+                    print(f"[WARNING] Tier {tier_idx.item()} is empty!")
+                    continue
+                num_samples_in_tier = len(tier_data)
+                if num_samples_in_tier == 0:
+                    print(f"[WARNING] Tier {tier_idx.item()} is empty.")
+                    continue
+                # Then, select random points and their indices in this tier for the num of samples we can
+                sampled_batch_size = min(remaining_batch_size, num_samples_in_tier)
+                sampled_indices = torch.randint(0, num_samples_in_tier, (sampled_batch_size,))
+                indices.append(sampled_indices)
+                sampled_indices_list.extend(sampled_indices.tolist())
+                # NOTE: print for debugging
+                # print(f"Sampling {sampled_batch_size} from Tier {tier_idx.item()}")
+                # Calculate data points' importance sampling weights based on TD error
+                sampled_data = [
+                    TensorDict(tier_data[idx.item()][2], batch_size=[])
+                    for idx in sampled_indices
+                ]
+                if not sampled_data:
+                    print(f"[WARNING] No data found for sampled indices in tier {tier_idx.item()}.")
+                    continue
+                # Calculate weights based on TD error
+                td_errors = torch.tensor([d["td_error"] for d in sampled_data])
+                weights.append(td_errors)
+                all_sampled_data.extend(sampled_data)  # Append the sampled data
+                # Update the remaining batch size
+                remaining_batch_size -= sampled_batch_size
+                # If we're all done, break
+                if remaining_batch_size <= 0:
+                    break
+
+        # If no valid data was sampled, throw an error
+        if not all_sampled_data:
+            print("[ERROR] No valid data found for sampling.")
+            raise ValueError("No valid data was sampled from the tiers.")
+        # Flatten indices and weights
+        indices = torch.cat(indices, dim=0)
+        weights = torch.cat(weights, dim=0)
+        # Normalize Weights
+        weight_max = weights.max()
+        normalized_weights = weights / weight_max
+        # Assert final sampled data matches the batch size
+        assert len(all_sampled_data) == batch_size, f"Expected {batch_size} samples, but got {len(all_sampled_data)}."
+        # Add 'index' to the info dictionary
+        info = {"_weight": normalized_weights, "index": sampled_indices_list}
+        return all_sampled_data, info
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "tier_probs": self.tier_probs,
+            "_rng_state": self._rng.get_state()
+        }
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        self.tier_probs = state_dict["tier_probs"]
+        self._rng = torch.Generator()
+        self._rng.set_state(state_dict["_rng_state"])
+
+    def _empty(self):
+        self._rng = torch.Generator()
+
+    def dumps(self, path):
+        with open(path, "wb") as f:
+            pickle.dump(self.state_dict(), f)
+
+    def loads(self, path):
+        with open(path, "rb") as f:
+            self.load_state_dict(pickle.load(f))
+
 
 
 class SliceSampler(Sampler):
