@@ -1,0 +1,24 @@
+/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/tyro/_parsers.py:347: UserWarning: The field `wandb-entity` is annotated with type `<class 'str'>`, but the default value `None` has type `<class 'NoneType'>`. We'll try to handle this gracefully, but it may cause unexpected behavior.
+  warnings.warn(message)
+/var/slurmd/spool/slurmd/job10890023/slurm_script: line 23: 15148 Killed                  python3 sac_baseline_profile.py
+Traceback (most recent call last):
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac/plot_profiles.py", line 30, in <module>
+    df = pd.read_csv("profile_log.csv")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 1026, in read_csv
+    return _read(filepath_or_buffer, kwds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 620, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 1620, in __init__
+    self._engine = self._make_engine(f, self.engine)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/pandas/io/parsers/readers.py", line 1880, in _make_engine
+    self.handles = get_handle(
+                   ^^^^^^^^^^^
+  File "/n/holylabs/LABS/janapa_reddi_lab/Lab/atschand/Courses-CS2241-AlgsForBigData-Final/sac_env/lib/python3.12/site-packages/pandas/io/common.py", line 873, in get_handle
+    handle = open(
+             ^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'profile_log.csv'
+slurmstepd: error: Detected 1 oom_kill event in StepId=10890023.batch. Some of the step tasks have been OOM Killed.
