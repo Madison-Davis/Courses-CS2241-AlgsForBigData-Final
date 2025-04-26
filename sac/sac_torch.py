@@ -22,8 +22,8 @@ import tyro
 import wandb
 from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
-from torchrl.data import ListStorage
-from torchrl.data import PrioritizedReplayBuffer
+from torchrl.data import LazyTensorStorage
+from torchrl.data import TensorDictPrioritizedReplayBuffer
 
 # ++++++++++++++ Global Variables ++++++++++++++ #
 LOG_STD_MAX = 2
@@ -67,7 +67,8 @@ class Args:
     """target smoothing coefficient (default: 0.005)"""
     batch_size: int = 256
     """the batch size of sample from the reply memory"""
-    learning_starts: int = 5e3
+    # learning_starts: int = 5e3
+    learning_starts: int = 512
     """timestep to start learning"""
     policy_lr: float = 3e-4
     """the learning rate of the policy network optimizer"""
@@ -237,19 +238,10 @@ if __name__ == "__main__":
     else:
         alpha = args.alpha
 
-    # Setup: create replay buffer
-    # TODO: here is what we need to change!  Need to have a prioritized replay buffer
-    envs.single_observation_space.dtype = np.float32
-    # rb = ReplayBuffer(
-    #         args.buffer_size,
-    #         envs.single_observation_space,
-    #         envs.single_action_space,
-    #         device,
-    #         n_envs=args.num_envs,
-    #         handle_timeout_termination=False,
-    # )
-    rb = PrioritizedReplayBuffer(alpha=0.7, beta=0.9,
-                                 storage=ListStorage(args.buffer_size))
+    rb = TensorDictPrioritizedReplayBuffer(alpha=0.7, beta=0.9,
+                                           storage=LazyTensorStorage(
+                                                   args.buffer_size), )
+
     start_time = time.time()
 
     # NOTE: Try not to change this
@@ -325,8 +317,8 @@ if __name__ == "__main__":
                 "actions": actions_tensor,
                 "rewards": rewards_tensor,
                 "dones": terminations_tensor,
-                # use default td error that is high
-                "td_error": torch.ones_like(td_errors) * MAX_TD_ERROR,
+                "td_error": torch.ones_like(  # Use default td error
+                        td_errors) * MAX_TD_ERROR,
         }, [obs.shape[0]])
 
         rb.extend(transition)
@@ -338,8 +330,10 @@ if __name__ == "__main__":
         # NOTE: double Q-learning, technique to improve stability
         # Take min value outputted by two Q-values, inhibits overlearning
         if global_step > args.learning_starts:
-            # data = rb.sample(args.batch_size)
             data, info = rb.sample(batch_size=args.batch_size, return_info=True)
+
+            # Move relevant tensors to device
+            data = data.to(device)
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(
                         data['next_observations'])
@@ -380,7 +374,9 @@ if __name__ == "__main__":
             td_errors = torch.max(torch.abs(qf1_a_values - next_q_value),
                                   torch.abs(qf2_a_values - next_q_value))
 
-            rb.update_priority(info['index'], td_errors)
+            data.set('td_error', td_errors)
+            rb.update_tensordict_priority(data)
+
             # Optimize the model by 'sandwiching double Q-learner' with optimizers
             q_optimizer.zero_grad()
             qf_loss.backward()
