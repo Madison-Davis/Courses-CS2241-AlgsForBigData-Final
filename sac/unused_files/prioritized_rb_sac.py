@@ -1,5 +1,5 @@
 # sac.py
-
+# prioritized_rb_sac.py
 
 # docs and experiment results can be found at 
 # https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
