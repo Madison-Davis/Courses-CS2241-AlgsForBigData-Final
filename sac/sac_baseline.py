@@ -263,8 +263,12 @@ if __name__ == "__main__":
         # Save data to reply buffer (rb); handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
+            print(infos, next_obs)
             if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+                if "final_observation" in infos:
+                    real_next_obs[idx] = infos["final_observation"][idx]
+                else:
+                    real_next_obs[idx] = next_obs[idx]
 
         def print_param_info(name, param):
             print(f"Parameter: {name}")
