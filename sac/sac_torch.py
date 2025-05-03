@@ -319,7 +319,7 @@ if __name__ == "__main__":
                 "actions": actions_tensor,
                 "rewards": rewards_tensor,
                 "dones": terminations_tensor,
-                "td_error": torch.ones_like(td_errors) * MAX_TD_ERROR,
+                "td_error": td_errors,
         }, [obs.shape[0]])
 
         rb.extend(transition)
