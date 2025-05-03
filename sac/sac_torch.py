@@ -55,7 +55,7 @@ class Args:
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
-    total_timesteps: int = 10000
+    total_timesteps: int = 250000
     """total timesteps of the experiments"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -194,7 +194,7 @@ if __name__ == "__main__":
                 monitor_gym=True,
                 save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"../eval/runs/{run_name}")
     writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join(
@@ -270,7 +270,10 @@ if __name__ == "__main__":
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+                if "final_observation" in infos:
+                        real_next_obs[idx] = infos["final_observation"][idx]
+                else:
+                        real_next_obs[idx] = next_obs[idx]
 
         # NOTE: things are plural because the env is vectorized
         # vectorized: use batching to kind of help 'speed up' the process of learning where surprising things are
