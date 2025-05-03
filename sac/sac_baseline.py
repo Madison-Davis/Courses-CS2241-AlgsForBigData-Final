@@ -56,7 +56,7 @@ class Args:
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
-    total_timesteps: int = 10000
+    total_timesteps: int = 250000
     """total timesteps of the experiments"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -264,7 +264,6 @@ if __name__ == "__main__":
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
-                print(infos, next_obs)
                 if "final_observation" in infos:
                     real_next_obs[idx] = infos["final_observation"][idx]
                 else:
