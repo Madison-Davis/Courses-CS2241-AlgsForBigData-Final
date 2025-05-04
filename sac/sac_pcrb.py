@@ -17,8 +17,7 @@ from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 from torchrl.data import TensorDictPrioritizedReplayBuffer
 from torchrl.data.replay_buffers.storages import _stack_anything
-
-from sac import pcrb_torch_storage
+import pcrb_torch_storage
 
 # ++++++++++++++ Global Variables ++++++++++++++ #
 LOG_STD_MAX = 2
@@ -50,7 +49,7 @@ class Args:
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
-    total_timesteps: int = 10000
+    total_timesteps: int = 250000
     """total timesteps of the experiments"""
     num_envs: int = 1
     """the number of parallel game environments"""
@@ -65,7 +64,7 @@ class Args:
     batch_size: int = 256
     """the batch size of sample from the reply memory"""
     # learning_starts: int = 5e3
-    learning_starts: int = 512
+    learning_starts: int = 5e3
     """timestep to start learning"""
     policy_lr: float = 3e-4
     """the learning rate of the policy network optimizer"""
@@ -191,7 +190,7 @@ if __name__ == "__main__":
                 monitor_gym=True,
                 save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"../eval/runs/{run_name}")
     writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join(
@@ -308,7 +307,10 @@ if __name__ == "__main__":
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+                if "final_observation" in infos:
+                    real_next_obs[idx] = infos["final_observation"][idx]
+                else:
+                    real_next_obs[idx] = real_next_obs[idx]
 
         # NOTE: things are plural because the env is vectorized
         # vectorized: use batching to kind of help 'speed up' the process of learning where surprising things are
