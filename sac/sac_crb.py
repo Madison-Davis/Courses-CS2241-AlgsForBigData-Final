@@ -57,7 +57,7 @@ class Args:
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
-    total_timesteps: int = 250000
+    total_timesteps: int = 50000
     """total timesteps of the experiments"""
     num_envs: int = 1
     """the number of parallel game environments"""
