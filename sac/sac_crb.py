@@ -1,10 +1,3 @@
-# sac_torch.py
-
-
-# docs and experiment results can be found at 
-# https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
-
-
 # ++++++++++++ Imports and Installs ++++++++++++ #
 import os
 import random
@@ -22,8 +15,10 @@ import tyro
 import wandb
 from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
-from torchrl.data import LazyTensorStorage
-from torchrl.data import TensorDictPrioritizedReplayBuffer
+from torchrl.data import ReplayBuffer
+from torchrl.data.replay_buffers.storages import _stack_anything
+
+import pcrb_torch_storage
 
 # ++++++++++++++ Global Variables ++++++++++++++ #
 LOG_STD_MAX = 2
@@ -55,11 +50,13 @@ class Args:
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
     """the environment id of the task"""
-    total_timesteps: int = 250000
+    total_timesteps: int = 50000
     """total timesteps of the experiments"""
     num_envs: int = 1
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
+    """the number of tiers in the replay buffer"""
+    num_tiers: int = 3
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -77,7 +74,7 @@ class Args:
     policy_frequency: int = 2
     """the frequency of training policy (delayed)"""
     target_network_frequency: int = 1  # Denis Yarats' implementation delays this by 2.
-    """the frequency of updates for the target nerworks"""
+    """the frequency of updates for the target networks"""
     alpha: float = 0.2
     """Entropy regularization coefficient."""
     autotune: bool = True
@@ -238,10 +235,50 @@ if __name__ == "__main__":
     else:
         alpha = args.alpha
 
-    rb = TensorDictPrioritizedReplayBuffer(alpha=0.4, beta=0.6,
-                                           storage=LazyTensorStorage(
-                                                   args.buffer_size),
-                                           priority_key="td_error" )
+    pcrb_storage = pcrb_torch_storage.TieredCacheStorage(
+            max_size=args.buffer_size,
+            num_tiers=args.num_tiers,
+            transition_key_to_bytes={
+                    'observations': {
+                            'dtype': torch.from_numpy(np.zeros(1,
+                                                               dtype=envs.single_observation_space.dtype)).dtype,
+                            'shape': envs.single_observation_space.shape
+                    },
+                    'next_observations': {
+                            'dtype': torch.from_numpy(np.zeros(1,
+                                                               dtype=envs.single_observation_space.dtype)).dtype,
+                            'shape': envs.single_observation_space.shape
+                    },
+                    'actions': {
+                            'dtype': torch.from_numpy(np.zeros(1,
+                                                               dtype=envs.single_action_space.dtype)).dtype,
+                            'shape': envs.single_action_space.shape if hasattr(
+                                    envs.single_action_space, 'shape') else (1,)
+                    },
+                    'rewards': {
+                            'dtype': torch.float64,
+                            'shape': (1,)
+                    },
+                    'dones': {
+                            'dtype': torch.bool,
+                            'shape': (1,)
+                    },
+                    'td_error': {
+
+                            'dtype': torch.float64,
+                            'shape': (1,)
+                    }
+            },
+            keys_to_quantize=[
+                    'observations',
+                    'next_observations'
+            ],
+            tier_dtypes=(torch.float64, torch.float32, torch.float16),
+    )
+
+    rb = ReplayBuffer(batch_size = args.batch_size,
+                    collate_fn=_stack_anything,
+                    storage=pcrb_storage)
 
     start_time = time.time()
 
@@ -271,7 +308,10 @@ if __name__ == "__main__":
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+                if "final_observation" in infos:
+                    real_next_obs[idx] = infos["final_observation"][idx]
+                else:
+                    real_next_obs[idx] = real_next_obs[idx]
 
         # NOTE: things are plural because the env is vectorized
         # vectorized: use batching to kind of help 'speed up' the process of learning where surprising things are
@@ -318,7 +358,7 @@ if __name__ == "__main__":
                 "actions": actions_tensor,
                 "rewards": rewards_tensor,
                 "dones": terminations_tensor,
-                "td_error": td_errors
+                "td_error": td_errors,
         }, [obs.shape[0]])
 
         rb.extend(transition)
@@ -334,6 +374,14 @@ if __name__ == "__main__":
 
             # Move relevant tensors to device
             data = data.to(device)
+
+            # Our tiered cache storage changes the data types, so we need to 
+            # cast everything back to float32 to pass them through the networks
+            data['observations'] = data['observations'].to(torch.float32)
+            data['next_observations'] = data['next_observations'].to(
+                    torch.float32)
+            data['actions'] = data['actions'].to(torch.float32)
+            
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(
                         data['next_observations'])
