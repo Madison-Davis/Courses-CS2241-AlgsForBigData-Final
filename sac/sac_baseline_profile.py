@@ -49,7 +49,8 @@ import torch.nn.functional as F
 import stable_baselines3 as sb3
 from dataclasses import dataclass
 from torch.utils.tensorboard import SummaryWriter
-from stable_baselines3.common.buffers import ReplayBuffer
+from torchrl.data import ReplayBuffer, LazyTensorStorage
+from tensordict import TensorDict
 
 # Global definitions
 LOG_STD_MAX = 2
@@ -117,7 +118,7 @@ class Args:
     capture_video: bool = False
     # Algorithm-Specific Arguments
     env_id: str = "Hopper-v5"
-    total_timesteps: int = 20000   # updated to 30,000 steps
+    total_timesteps: int = 20000
     num_envs: int = 1
     buffer_size: int = 10000
     gamma: float = 0.99
@@ -293,12 +294,12 @@ if __name__ == "__main__":
 
         envs.single_observation_space.dtype = np.float32
         rb = ReplayBuffer(
-            args.buffer_size,
-            envs.single_observation_space,
-            envs.single_action_space,
-            device,
-            n_envs=args.num_envs,
-            handle_timeout_termination=False,
+                storage=LazyTensorStorage(
+                    max_size=args.buffer_size,
+                    device=device
+                ),
+                batch_size=args.batch_size,
+                collate_fn=lambda x: x
         )
         start_time = time.time()
 
@@ -338,7 +339,46 @@ if __name__ == "__main__":
                 if trunc:
                     real_next_obs[idx] = infos["final_observation"][idx]
             t0 = time.time()
-            rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+            with torch.no_grad():
+                # Convert numpy arrays to tensors for network computation
+                obs_tensor = torch.FloatTensor(obs).to(device)
+                actions_tensor = torch.FloatTensor(actions).to(device)
+                next_obs_tensor = torch.FloatTensor(real_next_obs).to(device)
+                rewards_tensor = torch.FloatTensor(rewards).reshape(-1, 1).to(
+                        device)
+                terminations_tensor = torch.FloatTensor(terminations).reshape(-1,
+                                                                            1).to(
+                        device)
+
+                # Get next state values
+                next_actions, next_state_log_pi, _ = actor.get_action(
+                        next_obs_tensor)
+                qf1_next_target = qf1_target(next_obs_tensor, next_actions)
+                qf2_next_target = qf2_target(next_obs_tensor, next_actions)
+                min_qf_next_target = torch.min(qf1_next_target,
+                                            qf2_next_target) - alpha * next_state_log_pi
+                next_q_value = rewards_tensor + (
+                        1 - terminations_tensor) * args.gamma * (
+                                    min_qf_next_target).view(-1)
+                qf1_current = qf1(obs_tensor, actions_tensor)
+                qf2_current = qf2(obs_tensor, actions_tensor)
+
+                # TD errors
+                td_error1 = torch.abs(qf1_current - next_q_value)
+                td_error2 = torch.abs(qf2_current - next_q_value)
+                td_errors = torch.max(td_error1, td_error2)
+
+
+            transition = TensorDict({
+                "observations": obs_tensor,
+                "next_observations": next_obs_tensor,
+                "actions": actions_tensor,
+                "rewards": rewards_tensor,
+                "dones": terminations_tensor,
+                "td_error": td_errors
+            }, [obs.shape[0]])
+            rb.extend(transition)
             profile['latency_rb_add'] = time.time() - t0
 
             # Update state for next iteration.
@@ -352,13 +392,13 @@ if __name__ == "__main__":
 
                 t0 = time.time()
                 with torch.no_grad():
-                    next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
-                    qf1_next_target = qf1_target(data.next_observations, next_state_actions)
-                    qf2_next_target = qf2_target(data.next_observations, next_state_actions)
+                    next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
+                    qf1_next_target = qf1_target(data["next_observations"], next_state_actions)
+                    qf2_next_target = qf2_target(data["next_observations"], next_state_actions)
                     min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi
-                    next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_target).view(-1)
-                qf1_a_values = qf1(data.observations, data.actions).view(-1)
-                qf2_a_values = qf2(data.observations, data.actions).view(-1)
+                    next_q_value = data["rewards"].flatten() + (1 - data["dones"].flatten()) * args.gamma * (min_qf_next_target).view(-1)
+                qf1_a_values = qf1(data["observations"], data["actions"]).view(-1)
+                qf2_a_values = qf2(data["observations"], data["actions"]).view(-1)
                 qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
                 qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
                 qf_loss = qf1_loss + qf2_loss
@@ -370,9 +410,9 @@ if __name__ == "__main__":
                 q_optimizer.step()
                 # Delayed policy (actor) update
                 for _ in range(args.policy_frequency):
-                    pi, log_pi, _ = actor.get_action(data.observations)
-                    qf1_pi = qf1(data.observations, pi)
-                    qf2_pi = qf2(data.observations, pi)
+                    pi, log_pi, _ = actor.get_action(data["observations"])
+                    qf1_pi = qf1(data["observations"], pi)
+                    qf2_pi = qf2(data["observations"], pi)
                     min_qf_pi = torch.min(qf1_pi, qf2_pi)
                     actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
                     actor_optimizer.zero_grad()
@@ -380,7 +420,7 @@ if __name__ == "__main__":
                     actor_optimizer.step()
                     if args.autotune:
                         with torch.no_grad():
-                            _, log_pi, _ = actor.get_action(data.observations)
+                            _, log_pi, _ = actor.get_action(data["observations"])
                         alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
                         a_optimizer.zero_grad()
                         alpha_loss.backward()
