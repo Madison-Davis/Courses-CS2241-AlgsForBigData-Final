@@ -275,7 +275,7 @@ if __name__ == "__main__":
             tier_dtypes=(torch.float64, torch.float32, torch.float16),
     )
 
-    rb = TensorDictPrioritizedReplayBuffer(alpha=0.7, beta=0.9,
+    rb = TensorDictPrioritizedReplayBuffer(alpha=0.8, beta=0.4,
                                            collate_fn=_stack_anything,
                                            storage=pcrb_storage)
 
@@ -357,8 +357,7 @@ if __name__ == "__main__":
                 "actions": actions_tensor,
                 "rewards": rewards_tensor,
                 "dones": terminations_tensor,
-                "td_error": torch.ones_like(  # Use default td error
-                        td_errors) * MAX_TD_ERROR,
+                "td_error": td_errors,
         }, [obs.shape[0]])
 
         rb.extend(transition)
