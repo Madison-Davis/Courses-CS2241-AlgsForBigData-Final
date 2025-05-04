@@ -252,7 +252,7 @@ if __name__ == "__main__":
     seeds = [1, 2, 3]
 
     # Remove existing CSV file if present
-    profile_filename = "profile_log.csv"
+    profile_filename = "profile_log_pcrb.csv"
     if os.path.exists(profile_filename):
         os.remove(profile_filename)
 
