@@ -277,7 +277,7 @@ if __name__ == "__main__":
             tier_dtypes=(torch.float32, torch.float16, torch.float8_e4m3fn),
     )
 
-    rb = TensorDictPrioritizedReplayBuffer(alpha=0.8, beta=0.4,
+    rb = TensorDictPrioritizedReplayBuffer(alpha=0.7, beta=0.4,
                                            collate_fn=_stack_anything,
                                            storage=pcrb_storage)
 
