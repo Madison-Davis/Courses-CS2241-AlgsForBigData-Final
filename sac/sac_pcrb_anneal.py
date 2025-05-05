@@ -301,7 +301,7 @@ if __name__ == "__main__":
     # For the total # of timesteps...
     for global_step in range(args.total_timesteps):
         # Annealing: adjust beta
-        rb.beta = anneal_beta(step=global_step, total_steps=args.total_timesteps, beta=beta_start)
+        rb.beta = anneal_beta(step=global_step, total_steps=args.total_timesteps, beta_start=beta_start)
 
         # Determine the actions we can do
         if global_step < args.learning_starts:
