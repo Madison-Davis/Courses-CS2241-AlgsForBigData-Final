@@ -167,6 +167,17 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     return thunk
 
 
+
+# +++++++++++++++++ Helper Function ++++++++++++++++ #
+def anneal_beta(step: int, total_steps: int, beta_start: float = 0.4, beta_end: float = 1.0, fraction: float = 0.8) -> float:
+    """Linearly anneals beta from beta_start to beta_end over `fraction` of total_steps."""
+    anneal_steps = int(total_steps * fraction)
+    if step >= anneal_steps:
+        return beta_end
+    return beta_start + (beta_end - beta_start) * (step / anneal_steps)
+
+
+
 # +++++++++++++++++ Main Function ++++++++++++++++ #
 if __name__ == "__main__":
 
@@ -277,7 +288,8 @@ if __name__ == "__main__":
             tier_dtypes=(torch.float32, torch.float16, torch.float8_e4m3fn),
     )
 
-    rb = TensorDictPrioritizedReplayBuffer(alpha=0.8, beta=0.4,
+    beta_start = 0.4
+    rb = TensorDictPrioritizedReplayBuffer(alpha=0.7, beta=beta_start,
                                            collate_fn=_stack_anything,
                                            storage=pcrb_storage)
 
@@ -288,6 +300,9 @@ if __name__ == "__main__":
     obs, _ = envs.reset(seed=args.seed)
     # For the total # of timesteps...
     for global_step in range(args.total_timesteps):
+        # Annealing: adjust beta
+        rb.beta = anneal_beta(step=global_step, total_steps=args.total_timesteps, beta=beta_start)
+
         # Determine the actions we can do
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in
