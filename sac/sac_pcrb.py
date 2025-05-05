@@ -234,6 +234,7 @@ if __name__ == "__main__":
     else:
         alpha = args.alpha
 
+    # NOTE [CHANGE]
     pcrb_storage = pcrb_torch_storage.TieredCacheStorage(
             max_size=args.buffer_size,
             num_tiers=args.num_tiers,
@@ -310,7 +311,7 @@ if __name__ == "__main__":
                 if "final_observation" in infos:
                     real_next_obs[idx] = infos["final_observation"][idx]
                 else:
-                    real_next_obs[idx] = real_next_obs[idx]
+                    real_next_obs[idx] = next_obs[idx]
 
         # NOTE: things are plural because the env is vectorized
         # vectorized: use batching to kind of help 'speed up' the process of learning where surprising things are
@@ -374,6 +375,7 @@ if __name__ == "__main__":
             # Move relevant tensors to device
             data = data.to(device)
 
+            # NOTE [CHANGE]
             # Our tiered cache storage changes the data types, so we need to 
             # cast everything back to float32 to pass them through the networks
             data['observations'] = data['observations'].to(torch.float32)

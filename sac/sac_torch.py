@@ -238,6 +238,7 @@ if __name__ == "__main__":
     else:
         alpha = args.alpha
 
+    # NOTE [CHANGE]
     rb = TensorDictPrioritizedReplayBuffer(alpha=0.4, beta=0.6,
                                            storage=LazyTensorStorage(
                                                    args.buffer_size),
@@ -271,7 +272,11 @@ if __name__ == "__main__":
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
             if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
+                if "final_observation" in infos:
+                    real_next_obs[idx] = infos["final_observation"][idx]
+                else:
+                    real_next_obs[idx] = next_obs[idx]
+                
 
         # NOTE: things are plural because the env is vectorized
         # vectorized: use batching to kind of help 'speed up' the process of learning where surprising things are
@@ -350,10 +355,11 @@ if __name__ == "__main__":
             qf1_a_values = qf1(data['observations'], data['actions']).view(-1)
             qf2_a_values = qf2(data['observations'], data['actions']).view(-1)
 
-            # Original Q Loss
+            # ORIGINAL BASELINE
             # qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
             # qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
 
+            # NOTE [CHANGE]
             # Get importance sampling weights
             weights = info['_weight'].to(device)
 
