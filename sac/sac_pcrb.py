@@ -17,6 +17,7 @@ from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 from torchrl.data import TensorDictPrioritizedReplayBuffer
 from torchrl.data.replay_buffers.storages import _stack_anything
+
 import pcrb_torch_storage
 
 # ++++++++++++++ Global Variables ++++++++++++++ #
@@ -273,7 +274,7 @@ if __name__ == "__main__":
                     'observations',
                     'next_observations'
             ],
-            tier_dtypes=(torch.float64, torch.float32, torch.float16),
+            tier_dtypes=(torch.float32, torch.float16, torch.float8_e4m3fn),
     )
 
     rb = TensorDictPrioritizedReplayBuffer(alpha=0.8, beta=0.4,
@@ -382,7 +383,7 @@ if __name__ == "__main__":
             data['next_observations'] = data['next_observations'].to(
                     torch.float32)
             data['actions'] = data['actions'].to(torch.float32)
-            
+
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(
                         data['next_observations'])
