@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
+import ogbench
 import stable_baselines3 as sb3
 import torch
 import torch.nn as nn
@@ -121,7 +122,8 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm-Specific Arguments
-    env_id: str = "Hopper-v5"
+    # NOTE: Change from Hopper
+    env_id: str = "humanoidmaze-large-navigate-v0" # "Hopper-v5"
     """the environment id of the task"""
     total_timesteps: int = 20000
     """total timesteps of the experiments (set to 30,000)"""
@@ -220,10 +222,16 @@ class Actor(nn.Module):
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env, _, _ = ogbench.make_env_and_datasets(env_id)
+            # NOTE: Change from Hopper
+            # We're not capturing a video in our case; if we were going to, then yes, add a RecordVideo func
+            #env = gym.make(env_id, render_mode="rgb_array")
+            #env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env, _, _ = ogbench.make_env_and_datasets(env_id)
+            # NOTE: Change from Hopper
+            #env = gym.make(env_id, render_mode="rgb_array")
+        # OG Bench returns gymnasium environments so gym wrappers should work
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
